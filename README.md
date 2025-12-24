@@ -6,7 +6,7 @@ A real-time, browser-based dashboard that tracks and ranks the most spammed word
 
 ## Usage
 
-1.  **Open the App:** [Click here to view live demo](https://gamerboyrts-a11y.github.io/Twitch-Chat-spam/)
+1.  **Open the App:** [Click here to view live demo](https://gamerboyrts-a11y.github.io/Rank-Twitch-Chat-Spam/)
 2.  **Enter Channel:** Type a channel name (e.g., `xqc`, `forsen`, `Gorgc`) and hit **Connect**.
 3.  **Watch:** The board will light up with the top spammed emotes in real-time.
 4.  **Customize:**
