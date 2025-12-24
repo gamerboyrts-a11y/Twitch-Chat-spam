@@ -3,43 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Twitch Spam Tracker</title>
+    <title>Twitch Spam Tracker (7TV Support)</title>
     <style>
         body { background: linear-gradient(to bottom, #9146ff, #331a3d); color: white; font-family: Arial, sans-serif; text-align: center; padding: 20px; }
         input, button { padding: 10px; font-size: 18px; margin: 10px; }
         #status { font-size: 20px; margin: 20px; }
         .top { font-size: 48px; margin: 30px; padding: 20px; border: 3px solid #9146ff; border-radius: 20px; background: rgba(0,0,0,0.5); min-height: 100px; display: flex; align-items: center; justify-content: center; flex-direction: column; }
-        img { width: 80px; height: 80px; margin-right: 20px; }
+        img { width: 80px; height: 80px; margin-right: 20px; border-radius: 10px; }
         #top1 { border-color: gold; }
         #top2 { border-color: silver; }
         #top3 { border-color: #cd7f32; }
+        #loading { color: #9146ff; }
     </style>
 </head>
-<body>
-    <h1>Twitch Chat Spam Tracker (Top 3 Live)</h1>
+<body onload="load7TVEmotes()">
+    <h1>Twitch Chat Spam Tracker (Top 3 + 7TV Emotes)</h1>
     <input id="channel" placeholder="Enter channel name (lowercase)" />
     <button onclick="connect()">Connect</button>
-    <div id="status">Disconnected</div>
+    <div id="status">Disconnected - Loading 7TV emotes...</div>
     <div id="top1" class="top">Top 1: -</div>
     <div id="top2" class="top">Top 2: -</div>
     <div id="top3" class="top">Top 3: -</div>
 
     <script>
         let ws = null;
-        let spams = new Map(); // key -> {timestamps: [numbers]}
-        const TAU = 300000; // 5 minutes for decay
+        let spams = new Map(); // key -> {timestamps: []}
+        const TAU = 300000; // 5 min decay
         const MAX_TIMESTAMPS = 100;
-        const OLD_THRESHOLD = 3600000; // 1 hour
+        const OLD_THRESHOLD = 3600000; // 1 hr
+        let emoteMap = new Map(); // emote_name -> img_url
+
+        async function load7TVEmotes() {
+            try {
+                document.getElementById('status').innerHTML += ' <span id="loading">7TV...</span>';
+                const res = await fetch('https://7tv.io/v3/emotes/global');
+                const data = await res.json();
+                data.forEach(e => {
+                    const name = e.name.toLowerCase();
+                    const url = `https://cdn.7tv.app/emote/${e.id}/2x.webp`;
+                    emoteMap.set(name, url);
+                });
+                document.getElementById('loading').remove();
+                document.getElementById('status').textContent = 'Ready (7TV loaded)';
+                console.log(`Loaded ${emoteMap.size} 7TV global emotes`);
+            } catch(e) {
+                document.getElementById('status').textContent = 'Ready (7TV fetch failed)';
+                console.error('7TV load error:', e);
+            }
+        }
 
         function addSpam(key) {
             let item = spams.get(key) || {timestamps: []};
             item.timestamps.push(Date.now());
-            // Prune old
             item.timestamps = item.timestamps.filter(t => Date.now() - t < OLD_THRESHOLD);
-            // Keep recent
-            while (item.timestamps.length > MAX_TIMESTAMPS) {
-                item.timestamps.shift();
-            }
+            while (item.timestamps.length > MAX_TIMESTAMPS) item.timestamps.shift();
             spams.set(key, item);
         }
 
@@ -50,6 +67,13 @@
         }
 
         function updateDisplay() {
+            if (spams.size === 0) {
+                ['top1', 'top2', 'top3'].forEach((id, i) => {
+                    document.getElementById(id).innerHTML = `Top ${i+1}: -`;
+                });
+                return;
+            }
+            const totalScore = Array.from(spams.keys()).reduce((sum, k) => sum + getScore(k), 0);
             const items = Array.from(spams.keys())
                 .map(key => ({key: key.toLowerCase(), score: getScore(key)}))
                 .filter(item => item.score > 0)
@@ -58,16 +82,22 @@
             const tops = ['top1', 'top2', 'top3'];
             for (let i = 0; i < 3; i++) {
                 const el = document.getElementById(tops[i]);
-                if (i >= items.length || items[i].score === 0) {
+                if (i >= items.length) {
                     el.innerHTML = `Top ${i+1}: -`;
                     continue;
                 }
-                const maxScore = items[0].score;
-                const perc = Math.round((items[i].score / maxScore) * 100);
+                const perc = totalScore > 0 ? Math.round((items[i].score / totalScore) * 100) : 0;
                 let icon = items[i].key;
-                if (items[i].key === '1') icon = '<img src="1.png" alt="1" />';
-                else if (items[i].key === '2') icon = '<img src="2.png" alt="2" />';
-                else if (items[i].key === '3') icon = '<img src="3.png" alt="3" />';
+                // 7TV emote
+                if (emoteMap.has(items[i].key)) {
+                    icon = `<img src="${emoteMap.get(items[i].key)}" alt="${items[i].key}" />`;
+                } else if (items[i].key === '1') {
+                    icon = '<img src="1.jpg" alt="1" />';
+                } else if (items[i].key === '2') {
+                    icon = '<img src="2.jpg" alt="2" />';
+                } else if (items[i].key === '3') {
+                    icon = '<img src="3.jpg" alt="3" />';
+                }
                 el.innerHTML = `${icon} ${perc}%`;
             }
         }
@@ -89,10 +119,7 @@
 
         function connect() {
             const channel = document.getElementById('channel').value.trim().toLowerCase();
-            if (!channel) {
-                alert('Enter channel name');
-                return;
-            }
+            if (!channel) return alert('Enter channel');
             if (ws) ws.close();
             const nick = `justinfan${Math.floor(Math.random() * 90000) + 10000}`;
             ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
@@ -117,16 +144,16 @@
                 updateDisplay();
             };
             ws.onclose = () => {
-                document.getElementById('status').textContent = 'Disconnected (retry?)';
-                setTimeout(() => connect(), 5000); // Auto reconnect
+                document.getElementById('status').textContent = 'Disconnected (auto-reconnect)';
+                setTimeout(connect, 5000);
             };
             ws.onerror = (e) => {
-                document.getElementById('status').textContent = 'Error - check channel name';
+                document.getElementById('status').textContent = 'Connection error';
                 console.error(e);
             };
         }
 
-        setInterval(updateDisplay, 2000); // Update every 2s
+        setInterval(updateDisplay, 2000);
     </script>
 </body>
 </html>
