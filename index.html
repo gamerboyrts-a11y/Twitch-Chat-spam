@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Twitch Spam Tracker (Refined)</title>
+    <title>Twitch Spam Tracker (Fixed)</title>
     <style>
         body { background: linear-gradient(to bottom, #18181b, #0e0e10); color: #efeff1; font-family: 'Inter', Helvetica, Arial, sans-serif; text-align: center; padding: 20px; overflow-x: hidden; min-height: 100vh; margin: 0; }
         
@@ -90,9 +90,9 @@
             </div>
             
             <div class="toggle-group timer-group">
-                <span class="label-text">Reset Timer (s):</span>
+                <span class="label-text">Time Window (s):</span>
                 <input type="number" id="timerInput" placeholder="Off" value="30" min="1" onchange="updateTimer()">
-                <button onclick="manualReset()" style="padding: 6px 12px; font-size: 14px;">Reset Now</button>
+                <button onclick="manualReset()" style="padding: 6px 12px; font-size: 14px;">Clear</button>
             </div>
         </div>
     </div>
@@ -135,11 +135,12 @@
     <script>
         let ws = null;
         let spams = new Map();
-        const TAU = 300000; // 5 min half-life (still useful for smoothing within the interval)
+        const TAU = 300000; // 5 min half-life for score weight
         const MAX_TIMESTAMPS = 150;
         let emoteMap = new Map();
         let updateInterval = null;
-        let resetInterval = null;
+        
+        // REMOVED: let resetInterval = null; 
 
         function setProgress(pct, msg) {
             document.getElementById('progress-bar').style.width = pct + '%';
@@ -197,11 +198,33 @@
             const item = spams.get(word);
             if (!item) return 0;
             const now = Date.now();
+            // Score is weighted by how recent the messages are
             return item.ts.reduce((sum, t) => sum + Math.exp(-(now - t) / TAU), 0);
         }
 
         function updateDisplay() {
-            // Even if map is empty, we must clear the display
+            // --- NEW LOGIC START: Time Window Pruning ---
+            const timerInput = document.getElementById('timerInput').value;
+            // If timer has a valid value, filter out old data
+            if (timerInput && timerInput > 0) {
+                const limitMs = parseInt(timerInput) * 1000;
+                const now = Date.now();
+
+                for (const [key, item] of spams) {
+                    // Keep only timestamps that are newer than (now - limit)
+                    const newTs = item.ts.filter(t => (now - t) < limitMs);
+                    
+                    if (newTs.length === 0) {
+                        // If all instances of this word are too old, remove it entirely
+                        spams.delete(key);
+                    } else if (newTs.length < item.ts.length) {
+                        // If we filtered some out, update the array
+                        item.ts = newTs;
+                    }
+                }
+            }
+            // --- NEW LOGIC END ---
+
             const onlyEmotes = document.getElementById('emoteToggle').checked;
 
             let items = Array.from(spams.keys()).map(k => ({
@@ -210,19 +233,19 @@
                 isEmote: emoteMap.has(k)
             }));
 
-            // Filter
+            // Filter noise
             items = items.filter(i => i.score > 0.05);
             if (onlyEmotes) {
                 items = items.filter(i => i.isEmote);
             }
 
-            // Sort
+            // Sort by score
             items.sort((a, b) => b.score - a.score);
 
-            // Calc Trend Sum (Top 15)
+            // Calc Trend Sum (Top 15 for relative bars)
             const trendSum = items.slice(0, 15).reduce((sum, i) => sum + i.score, 0);
 
-            // Render
+            // Render top 3
             for (let i = 0; i < 3; i++) {
                 const contentEl = document.getElementById(`content${i+1}`);
                 const percTextEl = document.getElementById(`perc${i+1}`);
@@ -236,6 +259,7 @@
                 }
 
                 const item = items[i];
+                // Calculate percentage based on total activity
                 const pct = trendSum > 0 ? Math.min(100, Math.round((item.score / trendSum) * 100)) : 0;
 
                 if (item.isEmote) {
@@ -252,21 +276,16 @@
         function manualReset() {
             spams.clear();
             updateDisplay();
-            // Flash status
             const oldText = document.getElementById('status-text').textContent;
-            document.getElementById('status-text').textContent = "Board Reset!";
+            document.getElementById('status-text').textContent = "Board Cleared!";
             setTimeout(() => { document.getElementById('status-text').textContent = oldText; }, 1000);
         }
 
         function updateTimer() {
-            if (resetInterval) clearInterval(resetInterval);
+            // Trigger an immediate update so the user sees the effect of changing the timer
+            updateDisplay();
             const val = document.getElementById('timerInput').value;
-            // If empty or <=0, disable timer (Infinity effectively)
-            if (!val || val <= 0) return;
-            
-            const ms = parseInt(val) * 1000;
-            resetInterval = setInterval(manualReset, ms);
-            console.log(`Auto-reset set to ${val}s`);
+            console.log(`Window updated to ${val}s`);
         }
 
         function connect() {
@@ -276,8 +295,7 @@
             if (ws) { ws.close(); }
             manualReset();
             
-            // Start Auto-Reset Timer
-            updateTimer();
+            // NO setInterval here anymore. The updateDisplay loop handles the window.
 
             setProgress(5, "Connecting...");
 
@@ -301,6 +319,7 @@
                             msg.trim().split(/\s+/).forEach(t => {
                                 const clean = t.toLowerCase().replace(/[^a-z0-9]/g, ""); 
                                 if (clean.length > 0) addSpam(clean);
+                                // Also track original casing if needed, but we store keys as lowercase mostly
                                 if (t.length > 0 && t.toLowerCase() !== clean) addSpam(t.toLowerCase());
                             });
                         }
